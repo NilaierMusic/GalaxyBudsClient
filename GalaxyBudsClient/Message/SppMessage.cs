@@ -195,51 +195,132 @@ public partial class SppMessage(
     }
     public static IEnumerable<SppMessage> DecodeRawChunk(List<byte> incomingData, Models model, bool alternative)
     {
-        var spec = DeviceSpecHelper.FindByModel(model) ?? throw new InvalidOperationException();
+        // Validate input parameters
+        if (incomingData == null || incomingData.Count == 0)
+        {
+            Log.Warning("SppMessage.DecodeRawChunk: Empty or null incoming data");
+            return new List<SppMessage>();
+        }
+        
+        // Validate model
+        if (model == Models.NULL)
+        {
+            Log.Warning("SppMessage.DecodeRawChunk: Invalid model (NULL)");
+            return new List<SppMessage>();
+        }
+        
+        // Get device specification
+        var spec = DeviceSpecHelper.FindByModel(model);
+        if (spec == null)
+        {
+            Log.Error("SppMessage.DecodeRawChunk: No device specification found for model {Model}", model);
+            throw new InvalidOperationException($"No device specification found for model {model}");
+        }
+        
         var specSom = alternative ? (byte)MsgConstants.SmepSom : spec.StartOfMessage;
         var messages = new List<SppMessage>();
         var failCount = 0;
+        var totalProcessed = 0;
+        
+        // Set a safety limit to prevent infinite loops
+        const int maxIterations = 100;
+        var iterations = 0;
         
         do
         {
+            // Safety check to prevent infinite loops
+            iterations++;
+            if (iterations > maxIterations)
+            {
+                Log.Warning("SppMessage.DecodeRawChunk: Maximum iterations ({Max}) reached, abandoning remaining data", 
+                    maxIterations);
+                incomingData.Clear();
+                break;
+            }
+            
+            // Safety check for remaining data size
+            if (incomingData.Count < 5) // Minimum valid message size
+            {
+                Log.Debug("SppMessage.DecodeRawChunk: Remaining data too small for a valid message ({Size} bytes), preserving for next chunk", 
+                    incomingData.Count);
+                break;
+            }
+            
             int msgSize;
             var raw = incomingData.ToArray();
 
             try
             {
-                foreach (var hook in ScriptManager.Instance.RawStreamHooks)
+                // Apply raw stream hooks
+                try
                 {
-                    hook.OnRawDataAvailable(ref raw);
+                    foreach (var hook in ScriptManager.Instance.RawStreamHooks)
+                    {
+                        hook.OnRawDataAvailable(ref raw);
+                    }
+                }
+                catch (Exception hookEx)
+                {
+                    Log.Error(hookEx, "SppMessage.DecodeRawChunk: Error in raw stream hook");
                 }
 
+                // Decode the message
                 var msg = Decode(raw, model, alternative);
                 msgSize = msg.TotalPacketSize;
-
-                Log.Verbose(">> Incoming: {Msg}", msg);
-                    
-                foreach (var hook in ScriptManager.Instance.MessageHooks)
+                
+                // Validate message size
+                if (msgSize <= 0 || msgSize > incomingData.Count)
                 {
-                    hook.OnMessageAvailable(ref msg);
+                    throw new InvalidPacketException(InvalidPacketException.ErrorCodes.SizeMismatch, 
+                        $"Invalid message size: {msgSize}, buffer size: {incomingData.Count}");
                 }
 
+                Log.Verbose(">> Incoming: {Msg}", msg);
+                
+                // Apply message hooks
+                try
+                {
+                    foreach (var hook in ScriptManager.Instance.MessageHooks)
+                    {
+                        hook.OnMessageAvailable(ref msg);
+                    }
+                }
+                catch (Exception hookEx)
+                {
+                    Log.Error(hookEx, "SppMessage.DecodeRawChunk: Error in message hook");
+                }
+
+                // Add successfully decoded message
                 messages.Add(msg);
+                totalProcessed += msgSize;
+                failCount = 0; // Reset fail count on success
             }
             catch (InvalidPacketException e)
             {
+                // Log the error
                 SentrySdk.AddBreadcrumb($"{e.ErrorCode}: {e.Message}", "spp", level: BreadcrumbLevel.Warning);
-                Log.Error("{Code}: {Msg}", e.ErrorCode, e.Message);
+                Log.Error("SppMessage.DecodeRawChunk: {Code}: {Msg}", e.ErrorCode, e.Message);
+                
+                // Report certain errors to Sentry
                 if (e.ErrorCode is InvalidPacketException.ErrorCodes.Overflow
                     or InvalidPacketException.ErrorCodes.OutOfRange)
                 {
-                    SentrySdk.ConfigureScope(scope =>
+                    try
                     {
-                        scope.SetTag("raw-data-available", "true");
-                        scope.SetExtra("raw-data", HexUtils.Dump(raw, 512, false, false, false));
-                    });
-                    SentrySdk.CaptureException(e);
+                        SentrySdk.ConfigureScope(scope =>
+                        {
+                            scope.SetTag("raw-data-available", "true");
+                            scope.SetExtra("raw-data", HexUtils.Dump(raw, 512, false, false, false));
+                        });
+                        SentrySdk.CaptureException(e);
+                    }
+                    catch (Exception sentryEx)
+                    {
+                        Log.Error(sentryEx, "SppMessage.DecodeRawChunk: Error reporting to Sentry");
+                    }
                 }
-                    
-                // Attempt to remove broken message, otherwise skip data block
+                
+                // Attempt to find the next valid message start
                 var somIndex = 0;
                 for (var i = 1; i < incomingData.Count; i++)
                 {
@@ -250,17 +331,41 @@ public partial class SppMessage(
                     }
                 }
 
-                msgSize = somIndex;
-                    
+                // If no SOM found, skip the first byte
+                msgSize = somIndex > 0 ? somIndex : 1;
+                
+                // Increment fail counter
+                failCount++;
+                
+                // If we've had too many consecutive failures, abandon this data block
                 if (failCount > 5)
                 {
-                    // Abandon data block
-                    throw;
+                    Log.Warning("SppMessage.DecodeRawChunk: Too many consecutive failures ({Count}), abandoning data block", 
+                        failCount);
+                    incomingData.Clear();
+                    break;
                 }
-                    
+            }
+            catch (Exception ex)
+            {
+                // Handle unexpected errors
+                Log.Error(ex, "SppMessage.DecodeRawChunk: Unexpected error decoding message");
+                
+                // Skip one byte and continue
+                msgSize = 1;
                 failCount++;
+                
+                // If we've had too many consecutive failures, abandon this data block
+                if (failCount > 5)
+                {
+                    Log.Warning("SppMessage.DecodeRawChunk: Too many unexpected errors ({Count}), abandoning data block", 
+                        failCount);
+                    incomingData.Clear();
+                    break;
+                }
             }
 
+            // Remove processed data
             if (msgSize >= incomingData.Count)
             {
                 incomingData.Clear();
@@ -269,14 +374,18 @@ public partial class SppMessage(
 
             incomingData.RemoveRange(0, msgSize);
 
+            // Check if remaining buffer is all zeros
             if (ByteArrayUtils.IsBufferZeroedOut(incomingData))
             {
-                /* No more data remaining */
+                Log.Debug("SppMessage.DecodeRawChunk: Remaining buffer is all zeros, clearing");
+                incomingData.Clear();
                 break;
             }
 
         } while (incomingData.Count > 0);
 
+        Log.Debug("SppMessage.DecodeRawChunk: Processed {Bytes} bytes, decoded {Count} messages", 
+            totalProcessed, messages.Count);
         return messages;
     }
 

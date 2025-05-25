@@ -74,6 +74,16 @@ public sealed class BluetoothImpl : ReactiveObject, IDisposable
     public static bool HasValidDevice => Settings.Data.Devices.Count > 0 && 
                                          Settings.Data.Devices.Any(x => x.Model != Models.NULL);
     
+    /// <summary>
+    /// Connection state manager for tracking and validating connection state transitions
+    /// </summary>
+    public ConnectionStateManager ConnectionStateManager { get; } = new ConnectionStateManager();
+    
+    /// <summary>
+    /// Connection diagnostics for monitoring connection health and troubleshooting
+    /// </summary>
+    public ConnectionDiagnostics Diagnostics => ConnectionDiagnostics.Instance;
+    
     [Reactive] public string DeviceName { private set; get; } = "Galaxy Buds";
     [Reactive] public bool IsConnected { private set; get; }
     [Reactive] public string LastErrorMessage { private set; get; } = string.Empty;
@@ -252,67 +262,196 @@ public sealed class BluetoothImpl : ReactiveObject, IDisposable
 
     public async Task<bool> ConnectAsync(Device? device = null, bool alternative = false)
     {
+        // Record connection attempt in diagnostics
+        Diagnostics.RecordConnectionAttempt();
+        
+        // Validate connection mode
         if (alternative != AlternativeModeEnabled)
         {
             Log.Error("BluetoothImpl: Connection attempt in wrong mode {Alternative}", alternative);
+            Diagnostics.RecordFailedConnection("Connection attempt in wrong mode");
             return false;
         }
+        
+        // Check if we're already in a connecting state
+        if (ConnectionStateManager.CurrentState == ConnectionStates.Connecting ||
+            ConnectionStateManager.CurrentState == ConnectionStates.Reconnecting)
+        {
+            Log.Warning("BluetoothImpl: Connection already in progress, state: {State}", 
+                ConnectionStateManager.CurrentState);
+            return false;
+        }
+        
+        // Update connection state
+        ConnectionStateManager.SetConnecting();
+        
         // Create new cancellation token source if the previous one has already been used
         if(_connectCancelSource.IsCancellationRequested)
             _connectCancelSource = new CancellationTokenSource();
+        
+        // Add connection timeout
+        _connectCancelSource.CancelAfter(TimeSpan.FromSeconds(30));
         
         device ??= Device.Current;
 
         if (!HasValidDevice || device == null)
         {
             Log.Error("BluetoothImpl: Connection attempt without valid device");
+            ConnectionStateManager.SetError("No valid device configured");
+            Diagnostics.RecordFailedConnection("No valid device configured");
             return false;
         }
         
-        /* Load from configuration */
-        try
+        // Check if already connected in the requested mode
+        if ((alternative && IsConnectedAlternative) || (!alternative && IsConnected))
         {
-            var uuid = AlternativeModeEnabled ? Uuids.SmepSpp.ToString() : DeviceSpec.ServiceUuid.ToString();
-            if (uuid == null)
-            {
-                throw new BluetoothException(BluetoothException.ErrorCodes.UnsupportedDevice,
-                    "BluetoothImpl: Connection attempt without valid UUID (alt mode enabled but UUID unset?)");
-            }
-            DeviceName = await GetDeviceNameAsync();
-            device.Name = DeviceName;
-                        
-            await _backend.ConnectAsync(device.MacAddress,  uuid, _connectCancelSource.Token);
+            Log.Information("BluetoothImpl: Already connected in the requested mode");
+            ConnectionStateManager.SetConnected();
             return true;
         }
-        catch (BluetoothException ex)
+        
+        // Trigger connecting event
+        if (alternative)
+            ConnectingAlternative?.Invoke(this, EventArgs.Empty);
+        else
+            Connecting?.Invoke(this, EventArgs.Empty);
+        
+        /* Load from configuration */
+        int retryCount = 0;
+        const int maxRetries = 3;
+        TimeSpan delay = TimeSpan.FromMilliseconds(500);
+        
+        while (retryCount < maxRetries)
         {
-            OnBluetoothError(ex);
-            return false;
+            try
+            {
+                var uuid = AlternativeModeEnabled ? Uuids.SmepSpp.ToString() : DeviceSpec.ServiceUuid.ToString();
+                if (uuid == null)
+                {
+                    var ex = new BluetoothException(BluetoothException.ErrorCodes.UnsupportedDevice,
+                        "BluetoothImpl: Connection attempt without valid UUID (alt mode enabled but UUID unset?)");
+                    
+                    ConnectionStateManager.SetError(ex.Message);
+                    Diagnostics.RecordFailedConnection(ex.Message);
+                    OnBluetoothError(ex);
+                    return false;
+                }
+                
+                // Validate device name before connection
+                try
+                {
+                    DeviceName = await GetDeviceNameAsync();
+                    device.Name = DeviceName;
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "BluetoothImpl: Failed to get device name, using default");
+                    DeviceName = device.Name ?? "Galaxy Buds";
+                }
+                
+                Log.Information("BluetoothImpl: Connecting to {DeviceName} ({MacAddress}), attempt {RetryCount}/{MaxRetries}", 
+                    DeviceName, device.MacAddress, retryCount + 1, maxRetries);
+                
+                await _backend.ConnectAsync(device.MacAddress, uuid, _connectCancelSource.Token);
+                
+                // Verify connection was successful
+                if (_backend.IsStreamConnected)
+                {
+                    Log.Information("BluetoothImpl: Successfully connected to {DeviceName}", DeviceName);
+                    
+                    // Update connection state
+                    ConnectionStateManager.SetConnected();
+                    
+                    // Record successful connection in diagnostics
+                    Diagnostics.RecordSuccessfulConnection(DeviceName);
+                    
+                    return true;
+                }
+                
+                // If we reach here, connection was not successful despite no exception
+                var connEx = new BluetoothException(BluetoothException.ErrorCodes.ConnectFailed, 
+                    "Connection appeared successful but stream is not connected");
+                
+                ConnectionStateManager.SetError(connEx.Message);
+                Diagnostics.RecordFailedConnection(connEx.Message);
+                throw connEx;
+            }
+            catch (BluetoothException ex)
+            {
+                retryCount++;
+                if (retryCount >= maxRetries)
+                {
+                    Log.Error(ex, "BluetoothImpl: Connection failed after {MaxRetries} attempts", maxRetries);
+                    ConnectionStateManager.SetError($"Connection failed after {maxRetries} attempts: {ex.Message}");
+                    Diagnostics.RecordFailedConnection(ex.Message);
+                    OnBluetoothError(ex);
+                    return false;
+                }
+                
+                Log.Warning(ex, "BluetoothImpl: Connection attempt {RetryCount} failed, retrying in {Delay}ms", 
+                    retryCount, delay.TotalMilliseconds);
+                
+                // Exponential backoff
+                await Task.Delay(delay);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
+            }
+            catch (TaskCanceledException)
+            {
+                Log.Warning("BluetoothImpl: Connection task cancelled");
+                ConnectionStateManager.SetError("Connection task cancelled");
+                Diagnostics.RecordFailedConnection("Connection task cancelled");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "BluetoothImpl: Unexpected error during connection");
+                var btEx = new BluetoothException(BluetoothException.ErrorCodes.ConnectFailed, ex.Message);
+                ConnectionStateManager.SetError($"Unexpected error: {ex.Message}");
+                Diagnostics.RecordFailedConnection(ex.Message);
+                OnBluetoothError(btEx);
+                return false;
+            }
         }
-        catch (TaskCanceledException)
-        {
-            Log.Warning("BluetoothImpl: Connection task cancelled");
-            return false;
-        }
+        
+        // If we get here, all retries failed
+        ConnectionStateManager.SetError("Connection failed after all retry attempts");
+        Diagnostics.RecordFailedConnection("Connection failed after all retry attempts");
+        return false;
     }
 
     public async Task DisconnectAsync(bool alternative = false)
     {
+        // Update connection state
+        if (!ConnectionStateManager.SetDisconnecting())
+        {
+            Log.Warning("BluetoothImpl: Invalid state transition to Disconnecting from {State}", 
+                ConnectionStateManager.CurrentState);
+        }
+        
+        // Record disconnection in diagnostics
+        Diagnostics.RecordDisconnection("User requested disconnect");
+        
         if (!alternative && AlternativeModeEnabled)
         {
             Disconnected?.Invoke(this, "User requested disconnect while alt mode enabled");
             IsConnected = false;
+            ConnectionStateManager.SetDisconnected();
             return;
         }
         if (alternative && !AlternativeModeEnabled)
         {
-            Disconnected?.Invoke(this, "User requested alt disconnect while alt mode disable");
+            Disconnected?.Invoke(this, "User requested alt disconnect while alt mode disabled");
             IsConnectedAlternative = false;
+            ConnectionStateManager.SetDisconnected();
             return;
         }
+        
+        // Create a timeout for the disconnect operation
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        
         try
         {
-            // Cancel the connection attempt if it's still in progress
+            // Cancel any ongoing connection attempt
             try
             {
                 await _connectCancelSource.CancelAsync();
@@ -320,9 +459,24 @@ public sealed class BluetoothImpl : ReactiveObject, IDisposable
             catch (Exception ex)
             {
                 Log.Error(ex, "BluetoothImpl: Error while cancelling connection attempt");
-            } 
+            }
+            
+            // Clear any pending data in the queue
+            lock (IncomingQueue)
+            {
+                while (IncomingQueue.TryDequeue(out _)) { }
+            }
 
-            await _backend.DisconnectAsync();
+            // Attempt to disconnect with timeout
+            var disconnectTask = _backend.DisconnectAsync();
+            
+            // Wait for disconnect or timeout
+            if (await Task.WhenAny(disconnectTask, Task.Delay(5000, timeoutCts.Token)) != disconnectTask)
+            {
+                Log.Warning("BluetoothImpl: Disconnect operation timed out after 5 seconds");
+            }
+            
+            // Update state and notify regardless of timeout
             if (alternative)
             {
                 IsConnectedAlternative = false;
@@ -333,60 +487,219 @@ public sealed class BluetoothImpl : ReactiveObject, IDisposable
                 IsConnected = false;
                 Disconnected?.Invoke(this, "User requested disconnect");
             }
+            
+            // Update connection state
+            ConnectionStateManager.SetDisconnected();
+            
+            // Stop heartbeat monitoring
+            Diagnostics.StopHeartbeat();
+            
             LastErrorMessage = string.Empty;
+            
+            // Ensure we're really disconnected
+            if (_backend.IsStreamConnected)
+            {
+                Log.Warning("BluetoothImpl: Backend reports still connected after disconnect attempt");
+                // Force disconnect by recreating the backend if possible
+                try
+                {
+                    if (!Design.IsDesignMode)
+                    {
+                        var newBackend = PlatformImpl.Creator.CreateBluetoothService();
+                        if (newBackend != null)
+                        {
+                            // Transfer event handlers to new backend
+                            newBackend.Connecting += (_, _) => _backend.Connecting?.Invoke(_, _);
+                            newBackend.BluetoothErrorAsync += (_, exception) => _backend.BluetoothErrorAsync?.Invoke(_, exception);
+                            newBackend.NewDataAvailable += (_, data) => _backend.NewDataAvailable?.Invoke(_, data);
+                            newBackend.RfcommConnected += (_, _) => _backend.RfcommConnected?.Invoke(_, _);
+                            newBackend.Disconnected += (_, reason) => _backend.Disconnected?.Invoke(_, reason);
+                            
+                            _backend = newBackend;
+                            Log.Information("BluetoothImpl: Backend recreated after disconnect issues");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "BluetoothImpl: Failed to recreate backend after disconnect issues");
+                }
+            }
         }
         catch (BluetoothException ex)
         {
+            Log.Error(ex, "BluetoothImpl: Error during disconnect");
             OnBluetoothError(ex);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "BluetoothImpl: Unexpected error during disconnect");
+            OnBluetoothError(new BluetoothException(BluetoothException.ErrorCodes.Unknown, ex.Message));
+        }
+        finally
+        {
+            // Ensure connection state is updated even if an exception occurred
+            if (alternative)
+            {
+                IsConnectedAlternative = false;
+            }
+            else
+            {
+                IsConnected = false;
+            }
         }
     }
 
     public async Task SendAsync(SppMessage msg)
     {
+        // Validate connection mode
         if (AlternativeModeEnabled)
+        {
+            Log.Warning("BluetoothImpl: Attempted to send message in alternative mode");
             return;
+        }
+        
+        // Validate connection state
         if (!IsConnected)
+        {
+            Log.Warning("BluetoothImpl: Attempted to send message while disconnected");
             return;
+        }
+        
+        // Validate backend connection
+        if (!_backend.IsStreamConnected)
+        {
+            Log.Warning("BluetoothImpl: Backend reports disconnected but IsConnected is true, fixing state");
+            IsConnected = false;
+            OnBluetoothError(new BluetoothException(BluetoothException.ErrorCodes.ConnectFailed, 
+                "Connection state mismatch detected"));
+            return;
+        }
 
+        // Create a timeout for the send operation
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        
         try
         {
             Log.Verbose("<< Outgoing: {Msg}", msg);
-                
+            
+            // Apply message hooks
             foreach(var hook in ScriptManager.Instance.MessageHooks)
             {
                 hook.OnMessageSend(ref msg);
             }
 
+            // Encode the message
             var raw = msg.Encode(false);
-                
+            
+            // Apply raw stream hooks
             foreach(var hook in ScriptManager.Instance.RawStreamHooks)
             {
                 hook.OnRawDataSend(ref raw);
             }
-                
-            await _backend.SendAsync(raw);
+            
+            // Send with timeout
+            var sendTask = _backend.SendAsync(raw);
+            
+            if (await Task.WhenAny(sendTask, Task.Delay(5000, timeoutCts.Token)) != sendTask)
+            {
+                throw new BluetoothException(BluetoothException.ErrorCodes.TimedOut, 
+                    "Send operation timed out after 5 seconds");
+            }
+            
+            // Wait for the actual task to complete
+            await sendTask;
         }
         catch (BluetoothException ex)
         {
+            Log.Error(ex, "BluetoothImpl: Error sending message {MsgId}", msg.Id);
             OnBluetoothError(ex);
+            
+            // Attempt to reconnect if we get a send failure
+            if (ex.ErrorCode == BluetoothException.ErrorCodes.SendFailed)
+            {
+                Log.Information("BluetoothImpl: Attempting to reconnect after send failure");
+                _ = Task.Run(async () => {
+                    await DisconnectAsync();
+                    await Task.Delay(1000);
+                    await ConnectAsync();
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "BluetoothImpl: Unexpected error sending message {MsgId}", msg.Id);
+            OnBluetoothError(new BluetoothException(BluetoothException.ErrorCodes.SendFailed, ex.Message));
         }
     }
 
     public async Task SendAltAsync(SppAlternativeMessage msg)
     {
+        // Validate connection mode
         if (!AlternativeModeEnabled)
+        {
+            Log.Warning("BluetoothImpl: Attempted to send alternative message in normal mode");
             return;
+        }
+        
+        // Validate connection state
         if (!IsConnectedAlternative)
+        {
+            Log.Warning("BluetoothImpl: Attempted to send alternative message while disconnected");
             return;
+        }
+        
+        // Validate backend connection
+        if (!_backend.IsStreamConnected)
+        {
+            Log.Warning("BluetoothImpl: Backend reports disconnected but IsConnectedAlternative is true, fixing state");
+            IsConnectedAlternative = false;
+            OnBluetoothError(new BluetoothException(BluetoothException.ErrorCodes.ConnectFailed, 
+                "Alternative connection state mismatch detected"));
+            return;
+        }
+        
+        // Create a timeout for the send operation
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        
         try
         {
+            // Encode the message
             var data = msg.Msg.Encode(true);
             Log.Verbose("<< Outgoing (alt): {Msg}", msg);
-            await _backend.SendAsync(data);
+            
+            // Send with timeout
+            var sendTask = _backend.SendAsync(data);
+            
+            if (await Task.WhenAny(sendTask, Task.Delay(5000, timeoutCts.Token)) != sendTask)
+            {
+                throw new BluetoothException(BluetoothException.ErrorCodes.TimedOut, 
+                    "Alternative send operation timed out after 5 seconds");
+            }
+            
+            // Wait for the actual task to complete
+            await sendTask;
         }
         catch (BluetoothException ex)
         {
+            Log.Error(ex, "BluetoothImpl: Error sending alternative message");
             OnBluetoothError(ex);
+            
+            // Attempt to reconnect if we get a send failure
+            if (ex.ErrorCode == BluetoothException.ErrorCodes.SendFailed)
+            {
+                Log.Information("BluetoothImpl: Attempting to reconnect after alternative send failure");
+                _ = Task.Run(async () => {
+                    await DisconnectAsync(true);
+                    await Task.Delay(1000);
+                    await ConnectAsync(null, true);
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "BluetoothImpl: Unexpected error sending alternative message");
+            OnBluetoothError(new BluetoothException(BluetoothException.ErrorCodes.SendFailed, ex.Message));
         }
     }
         
@@ -505,50 +818,203 @@ public sealed class BluetoothImpl : ReactiveObject, IDisposable
     
     private void DataConsumerLoop()
     {
+        int consecutiveErrors = 0;
+        const int maxConsecutiveErrors = 5;
+        
         while (true)
         {
             try
             {
+                // Check for cancellation
                 _loopCancelSource.Token.ThrowIfCancellationRequested();
+                
+                // Wait a bit before processing next batch
                 Task.Delay(50).Wait(_loopCancelSource.Token);
+                
+                // Skip processing if not connected
+                if (!IsConnected && !IsConnectedAlternative)
+                {
+                    // Clear any pending data if we're not connected
+                    lock (IncomingQueue)
+                    {
+                        if (!IncomingQueue.IsEmpty)
+                        {
+                            Log.Debug("BluetoothImpl: Clearing {Count} queued data frames while disconnected", 
+                                IncomingQueue.Count);
+                            while (IncomingQueue.TryDequeue(out _)) { }
+                        }
+                    }
+                    
+                    _incomingData.Clear();
+                    continue;
+                }
+                
+                // Process any queued data
+                List<byte> dataToProcess = new List<byte>();
+                
+                lock (IncomingQueue)
+                {
+                    if (IncomingQueue.IsEmpty) continue;
+                    
+                    // Copy data to a local list to minimize lock time
+                    while (IncomingQueue.TryDequeue(out var frame))
+                    {
+                        if (frame != null && frame.Length > 0)
+                        {
+                            dataToProcess.AddRange(frame);
+                        }
+                    }
+                }
+                
+                // Skip if no data to process
+                if (dataToProcess.Count == 0) continue;
+                
+                // Add to our main buffer
+                _incomingData.AddRange(dataToProcess);
+                
+                // Prevent buffer from growing too large (possible memory leak)
+                if (_incomingData.Count > 10000)
+                {
+                    Log.Warning("BluetoothImpl: Data buffer exceeded 10KB, truncating to prevent memory issues");
+                    _incomingData.RemoveRange(0, _incomingData.Count - 5000);
+                }
+                
+                // Process the data
+                ProcessDataBlock(_incomingData, CurrentModel);
+                
+                // Reset error counter on successful processing
+                consecutiveErrors = 0;
             }
             catch (OperationCanceledException)
             {
+                Log.Information("BluetoothImpl: Data consumer loop cancelled");
                 _incomingData.Clear();
                 throw;
             }
-                
-            lock (IncomingQueue)
+            catch (Exception ex)
             {
-                if (IncomingQueue.IsEmpty) continue;
-                while (IncomingQueue.TryDequeue(out var frame))
+                consecutiveErrors++;
+                Log.Error(ex, "BluetoothImpl: Error in data consumer loop ({Count}/{Max})", 
+                    consecutiveErrors, maxConsecutiveErrors);
+                
+                // If we have too many consecutive errors, try to recover
+                if (consecutiveErrors >= maxConsecutiveErrors)
                 {
-                    _incomingData.AddRange(frame);
+                    Log.Warning("BluetoothImpl: Too many consecutive errors in data consumer loop, attempting recovery");
+                    consecutiveErrors = 0;
+                    _incomingData.Clear();
+                    
+                    // Try to reconnect in a separate task to avoid blocking the loop
+                    _ = Task.Run(async () => {
+                        try
+                        {
+                            if (IsConnected)
+                            {
+                                await DisconnectAsync();
+                                await Task.Delay(1000);
+                                await ConnectAsync();
+                            }
+                            else if (IsConnectedAlternative)
+                            {
+                                await DisconnectAsync(true);
+                                await Task.Delay(1000);
+                                await ConnectAsync(null, true);
+                            }
+                        }
+                        catch (Exception reconnectEx)
+                        {
+                            Log.Error(reconnectEx, "BluetoothImpl: Failed to recover from data consumer errors");
+                        }
+                    });
+                }
+                
+                // Short delay to prevent tight error loop
+                try
+                {
+                    Task.Delay(500, _loopCancelSource.Token).Wait();
+                }
+                catch (OperationCanceledException)
+                {
+                    _incomingData.Clear();
+                    throw;
                 }
             }
-
-            ProcessDataBlock(_incomingData, CurrentModel);
         }
     }
 
     public void ProcessDataBlock(List<byte> data, Models targetModel)
     {
+        // Validate input data
+        if (data == null || data.Count == 0)
+        {
+            Log.Warning("BluetoothImpl: Attempted to process empty data block");
+            return;
+        }
+        
         try
         {
-            foreach (var message in SppMessage.DecodeRawChunk(data, targetModel, AlternativeModeEnabled))
+            // Create a copy of the data to prevent modification during parsing
+            var dataCopy = new List<byte>(data);
+            
+            // Decode messages from the raw data
+            var messages = SppMessage.DecodeRawChunk(dataCopy, targetModel, AlternativeModeEnabled);
+            
+            // Process each decoded message
+            foreach (var message in messages)
             {
-                if (AlternativeModeEnabled)
+                // Validate message before processing
+                if (message == null)
                 {
-                    MessageReceivedAlternative?.Invoke(this, new SppAlternativeMessage(message));
+                    Log.Warning("BluetoothImpl: Null message received, skipping");
+                    continue;
                 }
-                else
+                
+                // Validate message ID is within expected range
+                if (!Enum.IsDefined(typeof(MsgIds), message.Id) && (int)message.Id != 0)
                 {
-                    MessageReceived?.Invoke(this, message);
+                    Log.Warning("BluetoothImpl: Message with invalid ID received: {MsgId}, skipping", message.Id);
+                    continue;
+                }
+                
+                try
+                {
+                    if (AlternativeModeEnabled)
+                    {
+                        var altMessage = new SppAlternativeMessage(message);
+                        Log.Verbose(">> Incoming (alt): {Msg}", altMessage);
+                        MessageReceivedAlternative?.Invoke(this, altMessage);
+                    }
+                    else
+                    {
+                        Log.Verbose(">> Incoming: {Msg}", message);
+                        MessageReceived?.Invoke(this, message);
+                    }
+                }
+                catch (Exception eventEx)
+                {
+                    Log.Error(eventEx, "BluetoothImpl: Error in message event handler");
                 }
             }
         }
         catch (InvalidPacketException ex)
         {
+            // Provide detailed error information based on error code
+            string errorDetail = ex.ErrorCode switch
+            {
+                InvalidPacketException.ErrorCodes.Som => "Start of message marker missing",
+                InvalidPacketException.ErrorCodes.Eom => "End of message marker missing",
+                InvalidPacketException.ErrorCodes.Checksum => "Checksum validation failed",
+                InvalidPacketException.ErrorCodes.SizeMismatch => "Message size mismatch",
+                InvalidPacketException.ErrorCodes.TooSmall => "Message too small to be valid",
+                InvalidPacketException.ErrorCodes.OutOfRange => "Message data out of range",
+                InvalidPacketException.ErrorCodes.Overflow => "Buffer overflow detected",
+                _ => "Unknown packet error"
+            };
+            
+            Log.Error(ex, "BluetoothImpl: Invalid packet received: {ErrorCode} - {ErrorDetail}", 
+                ex.ErrorCode, errorDetail);
+            
+            // Notify appropriate listeners about invalid data
             if (AlternativeModeEnabled)
             {
                 InvalidDataReceivedAlternative?.Invoke(this, ex);
@@ -557,10 +1023,23 @@ public sealed class BluetoothImpl : ReactiveObject, IDisposable
             {
                 InvalidDataReceived?.Invoke(this, ex);
             }
+            
+            // Clear the first part of the buffer to try to resync
+            if (data.Count > 10)
+            {
+                data.RemoveRange(0, Math.Min(10, data.Count));
+            }
+            else
+            {
+                data.Clear();
+            }
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed processing packet");
+            Log.Error(ex, "BluetoothImpl: Unexpected error while processing data block");
+            
+            // Try to recover by clearing the data buffer
+            data.Clear();
         }
     }
 }

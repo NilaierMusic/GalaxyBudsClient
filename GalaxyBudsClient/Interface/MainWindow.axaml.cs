@@ -181,18 +181,123 @@ public partial class MainWindow : StyledAppWindow
 
     private void OnBluetoothError(object? sender, BluetoothException e)
     {
-        _ = Dispatcher.UIThread.InvokeAsync(async () =>
+        Log.Error("MainWindow: Bluetooth error received: {ErrorCode}", e.ErrorCode);
+        
+        try
         {
-            switch (e.ErrorCode)
+            _ = Dispatcher.UIThread.InvokeAsync(async () =>
             {
-                case BluetoothException.ErrorCodes.NoAdaptersAvailable:
-                    await new MessageBox
+                try
+                {
+                    // Get user-friendly error message based on error code
+                    string errorTitle = Strings.Error;
+                    string errorDescription;
+                    
+                    switch (e.ErrorCode)
                     {
-                        Title = Strings.Error,
-                        Description = Strings.Nobluetoothdev
+                        case BluetoothException.ErrorCodes.NoAdaptersAvailable:
+                            errorDescription = Strings.Nobluetoothdev;
+                            break;
+                            
+                        case BluetoothException.ErrorCodes.AdapterPoweredOff:
+                            errorDescription = "Bluetooth adapter is powered off. Please turn on Bluetooth and try again.";
+                            break;
+                            
+                        case BluetoothException.ErrorCodes.DeviceNotFound:
+                            errorDescription = "Device not found. Please make sure your Galaxy Buds are nearby and in pairing mode.";
+                            break;
+                            
+                        case BluetoothException.ErrorCodes.DeviceDisconnected:
+                            errorDescription = "Device disconnected unexpectedly. Please make sure your Galaxy Buds are charged and within range.";
+                            break;
+                            
+                        case BluetoothException.ErrorCodes.OperationCancelled:
+                            errorDescription = "Bluetooth operation was cancelled. Please try again.";
+                            break;
+                            
+                        case BluetoothException.ErrorCodes.BluetoothLeNotSupported:
+                            errorDescription = "Bluetooth Low Energy is not supported on this device. Please use a device with Bluetooth LE support.";
+                            break;
+                            
+                        case BluetoothException.ErrorCodes.UnsupportedDevice:
+                            errorDescription = "This device is not supported. Please check the compatibility list.";
+                            break;
+                            
+                        case BluetoothException.ErrorCodes.PermissionDenied:
+                            errorDescription = "Bluetooth permission denied. Please grant the necessary permissions and try again.";
+                            break;
+                            
+                        default:
+                            errorDescription = $"An unexpected Bluetooth error occurred: {e.ErrorCode}. Please try again.";
+                            break;
+                    }
+                    
+                    // Show error message to user
+                    var result = await new MessageBox
+                    {
+                        Title = errorTitle,
+                        Description = errorDescription,
+                        PositiveButton = "OK",
+                        NegativeButton = "Diagnostics"
                     }.ShowAsync();
-                    break;
-            }
-        });
+                    
+                    // If user clicked "Diagnostics", open the diagnostics dialog
+                    if (result == MessageBox.Result.Negative)
+                    {
+                        OpenConnectionDiagnostics();
+                    }
+                    
+                    // Log the error and user notification
+                    Log.Information("MainWindow: Displayed Bluetooth error message to user: {ErrorCode}", e.ErrorCode);
+                }
+                catch (Exception ex)
+                {
+                    // Handle errors in the UI thread
+                    Log.Error(ex, "MainWindow: Error displaying Bluetooth error message");
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            // Handle errors when dispatching to UI thread
+            Log.Error(ex, "MainWindow: Failed to dispatch Bluetooth error to UI thread");
+        }
+    }
+    
+    /// <summary>
+    /// Opens the connection diagnostics dialog
+    /// </summary>
+    public void OpenConnectionDiagnostics()
+    {
+        try
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    var dialog = new ConnectionDiagnosticsDialog
+                    {
+                        WindowStartupLocation = WindowStartupLocation.CenterOwner
+                    };
+                    
+                    if (this.IsVisible)
+                    {
+                        dialog.ShowDialog(this);
+                    }
+                    else
+                    {
+                        dialog.Show();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "MainWindow: Error opening connection diagnostics dialog");
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "MainWindow: Failed to dispatch connection diagnostics dialog to UI thread");
+        }
     }
 }

@@ -1,0 +1,34 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:i18n="clr-namespace:GalaxyBudsClient.Generated.I18N;assembly=GalaxyBudsClient"
+        mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="300"
+        x:Class="GalaxyBudsClient.Interface.Dialogs.FirmwareRecoveryDialog"
+        Width="400" Height="300"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Icon="/Resources/icon.ico"
+        Title="{x:Static i18n:Strings.fw_recovery_title}">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <TextBlock Grid.Row="0" Margin="20,20,20,0" TextWrapping="Wrap" Text="{x:Static i18n:Strings.fw_recovery_desc}" />
+        
+        <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto,Auto" Margin="20,20,20,0">
+            <TextBlock Grid.Row="0" Margin="0,0,0,10" Text="{Binding StatusMessage}" TextWrapping="Wrap" />
+            
+            <ProgressBar Grid.Row="1" Margin="0,0,0,10" IsIndeterminate="True" IsVisible="{Binding IsInProgress}" />
+            
+            <TextBlock Grid.Row="2" Margin="0,0,0,10" Text="{Binding DetailMessage}" TextWrapping="Wrap" Foreground="#FFAAAAAA" />
+            
+            <Border Grid.Row="3" Margin="0,10,0,0" Padding="10" Background="#FFF5F5F5" CornerRadius="5" IsVisible="{Binding HasError}">
+                <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" Foreground="#FFFF0000" />
+            </Border>
+        </Grid>
+        
+        <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" Margin="20">
+            <Button Grid.Column="1" Margin="0,0,10,0" Content="{x:Static i18n:Strings.cancel}" Command="{Binding CancelCommand}" IsVisible="{Binding IsInProgress}" />
+            <Button Grid.Column="2" Content="{Binding ActionButtonText}" Command="{Binding ActionCommand}" IsEnabled="{Binding ActionButtonEnabled}" />
+        </Grid>
+    </Grid>
+</Window>

@@ -1,0 +1,124 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:i18n="clr-namespace:GalaxyBudsClient.Generated.I18N"
+        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="600"
+        Width="500" Height="600"
+        x:Class="GalaxyBudsClient.Interface.Dialogs.ConnectionDiagnosticsDialog"
+        Icon="/Resources/icon.ico"
+        Title="Connection Diagnostics"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <StackPanel Grid.Row="0" Margin="20">
+            <TextBlock Text="Connection Diagnostics" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+            <TextBlock Text="This tool helps diagnose Bluetooth connection issues with your Galaxy Buds." 
+                       TextWrapping="Wrap" Margin="0,0,0,10"/>
+            
+            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" Margin="0,10,0,0">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Device:" FontWeight="Bold" Margin="0,0,10,5"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding DeviceName}" Margin="0,0,0,5"/>
+                
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Model:" FontWeight="Bold" Margin="0,0,10,5"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ModelName}" Margin="0,0,0,5"/>
+                
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Connection State:" FontWeight="Bold" Margin="0,0,10,5"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding ConnectionState}" Margin="0,0,0,5"/>
+                
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Connection Quality:" FontWeight="Bold" Margin="0,0,10,5"/>
+                <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal">
+                    <ProgressBar Value="{Binding ConnectionQuality}" Maximum="100" Width="150" Height="15" Margin="0,0,10,0"/>
+                    <TextBlock Text="{Binding ConnectionQuality, StringFormat='{}{0}%'}" VerticalAlignment="Center"/>
+                </StackPanel>
+                
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="Time in State:" FontWeight="Bold" Margin="0,0,10,5"/>
+                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding TimeInState}" Margin="0,0,0,5"/>
+            </Grid>
+        </StackPanel>
+        
+        <TabControl Grid.Row="1" Margin="20,0,20,0">
+            <TabItem Header="Connection Log">
+                <Grid RowDefinitions="*,Auto">
+                    <ScrollViewer Grid.Row="0">
+                        <TextBox Text="{Binding ConnectionLog}" IsReadOnly="True" AcceptsReturn="True" 
+                                 TextWrapping="Wrap" FontFamily="Consolas,Menlo,Monospace" FontSize="12"/>
+                    </ScrollViewer>
+                    <Button Grid.Row="1" Content="Copy to Clipboard" Command="{Binding CopyLogCommand}" 
+                            HorizontalAlignment="Right" Margin="0,10,0,0"/>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Statistics">
+                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,10">
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Connection Attempts:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ConnectionAttempts}" Margin="0,0,0,5"/>
+                    
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Successful Connections:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SuccessfulConnections}" Margin="0,0,0,5"/>
+                    
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Failed Connections:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding FailedConnections}" Margin="0,0,0,5"/>
+                    
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Disconnections:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Disconnections}" Margin="0,0,0,5"/>
+                    
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="Messages Sent:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding MessagesSent}" Margin="0,0,0,5"/>
+                    
+                    <TextBlock Grid.Row="5" Grid.Column="0" Text="Failed Messages:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding FailedMessages}" Margin="0,0,0,5"/>
+                    
+                    <TextBlock Grid.Row="6" Grid.Column="0" Text="Messages Received:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding MessagesReceived}" Margin="0,0,0,5"/>
+                    
+                    <TextBlock Grid.Row="7" Grid.Column="0" Text="Invalid Messages:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding InvalidMessages}" Margin="0,0,0,5"/>
+                    
+                    <TextBlock Grid.Row="8" Grid.Column="0" Text="Last Connection:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding LastConnection}" Margin="0,0,0,5"/>
+                    
+                    <TextBlock Grid.Row="9" Grid.Column="0" Text="Last Disconnection:" FontWeight="Bold" Margin="0,0,10,5"/>
+                    <TextBlock Grid.Row="9" Grid.Column="1" Text="{Binding LastDisconnection}" Margin="0,0,0,5"/>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Troubleshooting">
+                <StackPanel Margin="0,10">
+                    <Button Content="Run Connection Test" Command="{Binding RunConnectionTestCommand}" 
+                            HorizontalAlignment="Left" Margin="0,0,0,10"/>
+                    
+                    <TextBlock Text="Troubleshooting Tips:" FontWeight="Bold" Margin="0,10,0,5"/>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,5">
+                        1. Ensure your Galaxy Buds are charged and within range (10 meters/30 feet).
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,5">
+                        2. Make sure Bluetooth is enabled on your computer.
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,5">
+                        3. Try putting your buds in pairing mode (hold both touch pads for 3+ seconds).
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,5">
+                        4. Disconnect your buds from other devices (phones, tablets) before connecting.
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,5">
+                        5. Try restarting your Bluetooth adapter or computer.
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,5">
+                        6. On Windows, check Device Manager for Bluetooth driver issues.
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,5">
+                        7. On macOS, try resetting the Bluetooth module (Option+Shift click Bluetooth menu).
+                    </TextBlock>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,5">
+                        8. On Linux, check if you have the necessary permissions (bluetoothd).
+                    </TextBlock>
+                </StackPanel>
+            </TabItem>
+        </TabControl>
+        
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="20">
+            <Button Content="Reset Statistics" Command="{Binding ResetStatisticsCommand}" Margin="0,0,10,0"/>
+            <Button Content="Close" Command="{Binding CloseCommand}" IsDefault="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

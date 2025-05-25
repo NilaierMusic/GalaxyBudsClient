@@ -6,18 +6,45 @@ public class FirmwareTransferException : Exception
 {
     public enum ErrorCodes
     {
+        // Timeout errors
         SessionTimeout,
         ControlTimeout,
         CopyTimeout,
+        TransferTimeout,
             
+        // Process errors
         ParseFail,
         SessionFail,
         CopyFail,
         VerifyFail,
-            
+        IntegrityCheckFail,
+        SignatureVerificationFail,
+        DeviceRejectedFirmware,
+        
+        // Device state errors
         BatteryLow,
+        BatteryTooLow,
         InProgress,
         Disconnected,
+        DeviceBusy,
+        DeviceInUse,
+        
+        // Input validation errors
+        InvalidBinary,
+        UnsupportedFirmwareVersion,
+        DowngradePrevented,
+        ModelMismatch,
+        
+        // Connection errors
+        BluetoothError,
+        ConnectionLost,
+        ConnectionQualityTooLow,
+        
+        // Recovery errors
+        RecoveryFailed,
+        PartialUpdateDetected,
+        
+        // Unknown errors
         Unknown
     }
         

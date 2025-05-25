@@ -1,0 +1,129 @@
+<!-- 
+This file contains additional string resources for the new features implemented.
+These should be merged into the main en.axaml file and translated to other languages.
+-->
+
+<!-- Connection diagnostics -->
+<sys:String x:Key="conndiag_header">Connection Diagnostics</sys:String>
+<sys:String x:Key="conndiag_description">Run diagnostics to identify and resolve Bluetooth connection issues</sys:String>
+<sys:String x:Key="conndiag_run">Run Diagnostics</sys:String>
+<sys:String x:Key="conndiag_checking">Checking connection...</sys:String>
+<sys:String x:Key="conndiag_bluetooth_status">Bluetooth Status</sys:String>
+<sys:String x:Key="conndiag_bluetooth_enabled">Bluetooth Enabled</sys:String>
+<sys:String x:Key="conndiag_bluetooth_disabled">Bluetooth Disabled</sys:String>
+<sys:String x:Key="conndiag_adapter_status">Adapter Status</sys:String>
+<sys:String x:Key="conndiag_adapter_ok">Adapter Working Properly</sys:String>
+<sys:String x:Key="conndiag_adapter_error">Adapter Error Detected</sys:String>
+<sys:String x:Key="conndiag_device_status">Device Status</sys:String>
+<sys:String x:Key="conndiag_device_paired">Device Paired</sys:String>
+<sys:String x:Key="conndiag_device_not_paired">Device Not Paired</sys:String>
+<sys:String x:Key="conndiag_connection_status">Connection Status</sys:String>
+<sys:String x:Key="conndiag_connection_active">Connection Active</sys:String>
+<sys:String x:Key="conndiag_connection_inactive">Connection Inactive</sys:String>
+<sys:String x:Key="conndiag_signal_strength">Signal Strength</sys:String>
+<sys:String x:Key="conndiag_signal_excellent">Excellent</sys:String>
+<sys:String x:Key="conndiag_signal_good">Good</sys:String>
+<sys:String x:Key="conndiag_signal_fair">Fair</sys:String>
+<sys:String x:Key="conndiag_signal_poor">Poor</sys:String>
+<sys:String x:Key="conndiag_signal_unavailable">Unavailable</sys:String>
+<sys:String x:Key="conndiag_interference">Interference Detection</sys:String>
+<sys:String x:Key="conndiag_interference_none">No Interference Detected</sys:String>
+<sys:String x:Key="conndiag_interference_detected">Interference Detected</sys:String>
+<sys:String x:Key="conndiag_latency">Connection Latency</sys:String>
+<sys:String x:Key="conndiag_latency_excellent">Excellent ({0}ms)</sys:String>
+<sys:String x:Key="conndiag_latency_good">Good ({0}ms)</sys:String>
+<sys:String x:Key="conndiag_latency_fair">Fair ({0}ms)</sys:String>
+<sys:String x:Key="conndiag_latency_poor">Poor ({0}ms)</sys:String>
+<sys:String x:Key="conndiag_latency_unavailable">Unavailable</sys:String>
+<sys:String x:Key="conndiag_packet_loss">Packet Loss</sys:String>
+<sys:String x:Key="conndiag_packet_loss_none">None ({0}%)</sys:String>
+<sys:String x:Key="conndiag_packet_loss_low">Low ({0}%)</sys:String>
+<sys:String x:Key="conndiag_packet_loss_medium">Medium ({0}%)</sys:String>
+<sys:String x:Key="conndiag_packet_loss_high">High ({0}%)</sys:String>
+<sys:String x:Key="conndiag_packet_loss_unavailable">Unavailable</sys:String>
+<sys:String x:Key="conndiag_recommendations">Recommendations</sys:String>
+<sys:String x:Key="conndiag_no_issues">No issues detected</sys:String>
+<sys:String x:Key="conndiag_enable_bluetooth">Enable Bluetooth in system settings</sys:String>
+<sys:String x:Key="conndiag_restart_adapter">Restart Bluetooth adapter</sys:String>
+<sys:String x:Key="conndiag_pair_device">Pair device in system settings</sys:String>
+<sys:String x:Key="conndiag_move_closer">Move closer to device to improve signal</sys:String>
+<sys:String x:Key="conndiag_reduce_interference">Reduce interference from other devices</sys:String>
+<sys:String x:Key="conndiag_update_drivers">Update Bluetooth drivers</sys:String>
+<sys:String x:Key="conndiag_reset_device">Reset device and re-pair</sys:String>
+<sys:String x:Key="conndiag_apply_fix">Apply Fix</sys:String>
+<sys:String x:Key="conndiag_copy_report">Copy Report</sys:String>
+<sys:String x:Key="conndiag_report_copied">Diagnostic report copied to clipboard</sys:String>
+<sys:String x:Key="conndiag_advanced">Advanced Diagnostics</sys:String>
+<sys:String x:Key="conndiag_test_connection">Test Connection</sys:String>
+<sys:String x:Key="conndiag_test_running">Running connection test...</sys:String>
+<sys:String x:Key="conndiag_test_complete">Test complete</sys:String>
+
+<!-- Firmware Recovery -->
+<sys:String x:Key="fw_recovery_header">Firmware Recovery</sys:String>
+<sys:String x:Key="fw_recovery_description">Recover from interrupted or failed firmware updates</sys:String>
+<sys:String x:Key="fw_recovery_detecting">Detecting recovery mode...</sys:String>
+<sys:String x:Key="fw_recovery_detected">Recovery mode detected</sys:String>
+<sys:String x:Key="fw_recovery_not_detected">Device not in recovery mode</sys:String>
+<sys:String x:Key="fw_recovery_backup_available">Backup firmware available</sys:String>
+<sys:String x:Key="fw_recovery_backup_unavailable">No backup firmware available</sys:String>
+<sys:String x:Key="fw_recovery_backup_outdated">Backup firmware outdated</sys:String>
+<sys:String x:Key="fw_recovery_restore_backup">Restore from backup</sys:String>
+<sys:String x:Key="fw_recovery_download_latest">Download latest firmware</sys:String>
+<sys:String x:Key="fw_recovery_select_file">Select firmware file</sys:String>
+<sys:String x:Key="fw_recovery_preparing">Preparing recovery...</sys:String>
+<sys:String x:Key="fw_recovery_uploading">Uploading recovery firmware...</sys:String>
+<sys:String x:Key="fw_recovery_verifying">Verifying firmware...</sys:String>
+<sys:String x:Key="fw_recovery_installing">Installing recovery firmware...</sys:String>
+<sys:String x:Key="fw_recovery_finalizing">Finalizing recovery...</sys:String>
+<sys:String x:Key="fw_recovery_success">Recovery successful</sys:String>
+<sys:String x:Key="fw_recovery_failed">Recovery failed</sys:String>
+<sys:String x:Key="fw_recovery_restart_device">Please restart your device</sys:String>
+<sys:String x:Key="fw_recovery_exit_recovery">Exiting recovery mode...</sys:String>
+<sys:String x:Key="fw_recovery_reconnecting">Reconnecting to device...</sys:String>
+<sys:String x:Key="fw_recovery_reconnect_failed">Failed to reconnect</sys:String>
+<sys:String x:Key="fw_recovery_reconnect_success">Successfully reconnected</sys:String>
+<sys:String x:Key="fw_recovery_backup_creating">Creating firmware backup...</sys:String>
+<sys:String x:Key="fw_recovery_backup_success">Backup created successfully</sys:String>
+<sys:String x:Key="fw_recovery_backup_failed">Failed to create backup</sys:String>
+<sys:String x:Key="fw_recovery_integrity_checking">Checking firmware integrity...</sys:String>
+<sys:String x:Key="fw_recovery_integrity_ok">Firmware integrity verified</sys:String>
+<sys:String x:Key="fw_recovery_integrity_failed">Firmware integrity check failed</sys:String>
+<sys:String x:Key="fw_recovery_battery_checking">Checking battery levels...</sys:String>
+<sys:String x:Key="fw_recovery_battery_ok">Battery levels sufficient</sys:String>
+<sys:String x:Key="fw_recovery_battery_low">Battery levels too low</sys:String>
+<sys:String x:Key="fw_recovery_charge_device">Please charge your device before continuing</sys:String>
+
+<!-- Additional Firmware Error Messages -->
+<sys:String x:Key="fw_fail_integrity">Firmware integrity check failed. The firmware file may be corrupted.</sys:String>
+<sys:String x:Key="fw_fail_compatibility">Firmware compatibility check failed. This firmware is not compatible with your device.</sys:String>
+<sys:String x:Key="fw_fail_battery_low">Battery too low for firmware update. Please charge your earbuds to at least 15% before updating.</sys:String>
+<sys:String x:Key="fw_fail_device_error">Device reported an error during update. Error code: {0}</sys:String>
+<sys:String x:Key="fw_fail_timeout">The firmware update timed out. Please try again.</sys:String>
+<sys:String x:Key="fw_fail_interrupted">The firmware update was interrupted. Please try again.</sys:String>
+<sys:String x:Key="fw_fail_recovery_mode">Device is in recovery mode. Please use the recovery tool to restore firmware.</sys:String>
+<sys:String x:Key="fw_fail_unknown_error">An unknown error occurred during the firmware update. Error details: {0}</sys:String>
+<sys:String x:Key="fw_fail_validation">Firmware validation failed. The firmware file may be corrupted or incompatible.</sys:String>
+<sys:String x:Key="fw_fail_download">Failed to download firmware. Please check your internet connection and try again.</sys:String>
+
+<!-- Connection State Messages -->
+<sys:String x:Key="conn_state_disconnected">Disconnected</sys:String>
+<sys:String x:Key="conn_state_connecting">Connecting...</sys:String>
+<sys:String x:Key="conn_state_connected">Connected</sys:String>
+<sys:String x:Key="conn_state_disconnecting">Disconnecting...</sys:String>
+<sys:String x:Key="conn_state_reconnecting">Reconnecting...</sys:String>
+<sys:String x:Key="conn_state_pairing">Pairing...</sys:String>
+<sys:String x:Key="conn_state_paired">Paired</sys:String>
+<sys:String x:Key="conn_state_unpairing">Unpairing...</sys:String>
+<sys:String x:Key="conn_state_error">Connection Error</sys:String>
+<sys:String x:Key="conn_state_retry">Retrying connection ({0}/{1})...</sys:String>
+<sys:String x:Key="conn_state_timeout">Connection timed out</sys:String>
+<sys:String x:Key="conn_state_auth_error">Authentication error</sys:String>
+<sys:String x:Key="conn_state_auth_failed">Authentication failed</sys:String>
+<sys:String x:Key="conn_state_auth_rejected">Authentication rejected</sys:String>
+<sys:String x:Key="conn_state_auth_timeout">Authentication timed out</sys:String>
+<sys:String x:Key="conn_state_device_not_found">Device not found</sys:String>
+<sys:String x:Key="conn_state_device_error">Device error</sys:String>
+<sys:String x:Key="conn_state_service_not_found">Service not found</sys:String>
+<sys:String x:Key="conn_state_service_error">Service error</sys:String>
+<sys:String x:Key="conn_state_protocol_error">Protocol error</sys:String>
+<sys:String x:Key="conn_state_unknown_error">Unknown error</sys:String>

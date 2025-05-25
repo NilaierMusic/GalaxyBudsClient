@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Timers;
 using GalaxyBudsClient.Generated.I18N;
@@ -28,8 +30,15 @@ public class FirmwareTransferManager
     public enum States
     {
         Ready,
+        PreparingUpdate,
+        VerifyingFirmware,
+        CheckingDeviceHealth,
+        BackingUpFirmware,
         InitializingSession,
-        Uploading
+        Uploading,
+        VerifyingUpdate,
+        Finalizing,
+        RecoveryMode
     }
 
     private States _state;
@@ -234,30 +243,191 @@ public class FirmwareTransferManager
 
     public async Task Install(FirmwareBinary binary)
     {
-        if (!BluetoothImpl.Instance.IsConnected)
+        try
         {
-            Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.Disconnected,
-                Strings.FwFailConnectionPrecheck));
-            return;
-        }
+            // Initialize cancellation token
+            _cancellationTokenSource = new CancellationTokenSource();
+            var cancellationToken = _cancellationTokenSource.Token;
+            
+            // Record start time for diagnostics
+            _startTime = DateTime.Now;
+            _retryCount = 0;
+            
+            // Update state to preparing
+            UpdateState(States.PreparingUpdate);
+            
+            // Validate Bluetooth connection
+            if (!BluetoothImpl.Instance.IsConnected)
+            {
+                Log.Error("FirmwareTransferManager: Attempted to install firmware while disconnected");
+                Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.Disconnected,
+                    Strings.FwFailConnectionPrecheck));
+                return;
+            }
+            
+            // Validate backend connection
+            if (!BluetoothImpl.Instance.Backend.IsStreamConnected)
+            {
+                Log.Error("FirmwareTransferManager: Backend reports disconnected but IsConnected is true");
+                Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.Disconnected,
+                    "Backend reports disconnected but IsConnected is true"));
+                return;
+            }
 
-        if (State != States.Ready)
+            // Validate firmware transfer state
+            if (State != States.PreparingUpdate)
+            {
+                Log.Error("FirmwareTransferManager: Attempted to install firmware while another operation is in progress");
+                Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.InProgress,
+                    Strings.FwFailPending));
+                return;
+            }
+            
+            // Validate firmware binary
+            if (binary == null || binary.Data == null || binary.Data.Length == 0)
+            {
+                Log.Error("FirmwareTransferManager: Invalid firmware binary provided");
+                Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.InvalidBinary,
+                    "Invalid firmware binary provided"));
+                return;
+            }
+            
+            // Validate firmware binary size
+            if (binary.Data.Length > 2 * 1024 * 1024) // 2MB max
+            {
+                Log.Error("FirmwareTransferManager: Firmware binary too large: {Size} bytes", binary.Data.Length);
+                Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.InvalidBinary,
+                    $"Firmware binary too large: {binary.Data.Length} bytes"));
+                return;
+            }
+            
+            // Verify firmware integrity
+            UpdateState(States.VerifyingFirmware);
+            StatusMessageChanged?.Invoke(this, "Verifying firmware integrity...");
+            
+            if (!await binary.VerifyIntegrity())
+            {
+                Log.Error("FirmwareTransferManager: Firmware integrity verification failed");
+                Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.IntegrityCheckFail,
+                    "Firmware integrity verification failed. The firmware file may be corrupted."));
+                return;
+            }
+            
+            // Check device health
+            UpdateState(States.CheckingDeviceHealth);
+            StatusMessageChanged?.Invoke(this, "Checking device health...");
+            
+            // Start health check timeout
+            _healthCheckTimeout.Start();
+            
+            // Check battery level
+            var batteryLevel = BluetoothImpl.Instance.DeviceSpec.BatteryL;
+            var batteryLevelR = BluetoothImpl.Instance.DeviceSpec.BatteryR;
+            var batteryLevelCase = BluetoothImpl.Instance.DeviceSpec.BatteryCase;
+            
+            // Stop health check timeout
+            _healthCheckTimeout.Stop();
+            
+            // Ensure battery level is sufficient (at least 30%)
+            if (batteryLevel < 30 || (batteryLevelR > 0 && batteryLevelR < 30))
+            {
+                Log.Error("FirmwareTransferManager: Battery level too low for firmware update: L={Left}%, R={Right}%", 
+                    batteryLevel, batteryLevelR);
+                Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.BatteryTooLow,
+                    $"Battery level too low for firmware update. Please charge your earbuds to at least 30% before updating. Current levels: L={batteryLevel}%, R={batteryLevelR}%"));
+                return;
+            }
+            
+            // Check if device is in use (playing music, on call, etc.)
+            var deviceStatus = BluetoothImpl.Instance.DeviceSpec.Status;
+            if (deviceStatus.HasFlag(DeviceStatusFlags.AudioPlaying) || 
+                deviceStatus.HasFlag(DeviceStatusFlags.CallActive))
+            {
+                Log.Error("FirmwareTransferManager: Device is currently in use");
+                Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.DeviceInUse,
+                    "Device is currently in use (playing audio or on a call). Please stop all audio playback and calls before updating."));
+                return;
+            }
+            
+            // Backup current firmware info
+            UpdateState(States.BackingUpFirmware);
+            StatusMessageChanged?.Invoke(this, "Backing up current firmware information...");
+            
+            await FirmwareIntegrityVerifier.Instance.BackupCurrentFirmware(_backupPath);
+            
+            // Save recovery info
+            await FirmwareRecoveryManager.Instance.SaveRecoveryInfo(binary);
+            
+            // Reset state variables
+            _mtuSize = 0;
+            _currentSegment = 0;
+            _lastSegmentOffset = 0;
+            _lastFragment = false;
+            _binary = binary;
+            
+            // Update state
+            UpdateState(States.InitializingSession);
+            
+            Log.Information("FirmwareTransferManager: Starting firmware installation, size: {Size} bytes, version: {Version}, model: {Model}", 
+                binary.Data.Length, binary.Version, binary.Model);
+            
+            // Register for Bluetooth error events during firmware update
+            BluetoothImpl.Instance.BluetoothError += OnBluetoothError;
+            BluetoothImpl.Instance.Disconnected += OnDisconnected;
+            
+            // Start session timeout timer
+            _sessionTimeout.Start();
+            
+            // Start overall transfer timeout
+            _transferTimeout.Start();
+            
+            // Send firmware open request
+            await BluetoothImpl.Instance.SendRequestAsync(MsgIds.FOTA_OPEN, _binary.SerializeTable());
+            
+            Log.Debug("FirmwareTransferManager: Sent FOTA_OPEN request");
+        }
+        catch (OperationCanceledException)
         {
-            Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.InProgress,
-                Strings.FwFailPending));
-            return;
+            Log.Warning("FirmwareTransferManager: Firmware installation cancelled by user");
+            Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.Unknown,
+                "Firmware installation cancelled by user"));
+            
+            // Reset state
+            Cancel();
         }
-
-        _mtuSize = 0;
-        _currentSegment = 0;
-        _lastSegmentOffset = 0;
-        _lastFragment = false;
-        _binary = binary;
+        catch (Exception ex)
+        {
+            Log.Error(ex, "FirmwareTransferManager: Error starting firmware installation");
+            Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.Unknown,
+                $"Error starting firmware installation: {ex.Message}"));
             
-        State = States.InitializingSession;
+            // Reset state
+            Cancel();
+        }
+    }
+    
+    private void OnBluetoothError(object? sender, BluetoothException ex)
+    {
+        if (State == States.Ready)
+            return;
             
-        await BluetoothImpl.Instance.SendRequestAsync(MsgIds.FOTA_OPEN, _binary.SerializeTable());
-        _sessionTimeout.Start();
+        Log.Error("FirmwareTransferManager: Bluetooth error during firmware update: {ErrorCode}", ex.ErrorCode);
+        Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.BluetoothError,
+            $"Bluetooth error during firmware update: {ex.ErrorCode}"));
+        
+        Cancel();
+    }
+    
+    private void OnDisconnected(object? sender, string reason)
+    {
+        if (State == States.Ready)
+            return;
+            
+        Log.Error("FirmwareTransferManager: Disconnected during firmware update: {Reason}", reason);
+        Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.Disconnected,
+            $"Disconnected during firmware update: {reason}"));
+        
+        Cancel();
     }
 
     public bool IsInProgress()
@@ -267,31 +437,185 @@ public class FirmwareTransferManager
         
     public async void Cancel()
     {
-        _binary = null;
-        _mtuSize = 0;
-        _currentSegment = 0;
-        _lastSegmentOffset = 0;
-        _lastFragment = false;
+        Log.Information("FirmwareTransferManager: Cancelling firmware transfer operation");
+        
+        try
+        {
+            // Cancel any pending operations
+            if (_cancellationTokenSource != null && !_cancellationTokenSource.IsCancellationRequested)
+            {
+                _cancellationTokenSource.Cancel();
+            }
             
-        State = States.Ready;
+            // Unregister event handlers
+            BluetoothImpl.Instance.BluetoothError -= OnBluetoothError;
+            BluetoothImpl.Instance.Disconnected -= OnDisconnected;
             
-        _sessionTimeout.Stop();
-        _controlTimeout.Stop();
-
-        await BluetoothImpl.Instance.DisconnectAsync();
-        await Task.Delay(100);
-        await BluetoothImpl.Instance.ConnectAsync();
+            // Reset state variables
+            _binary = null;
+            _mtuSize = 0;
+            _currentSegment = 0;
+            _lastSegmentOffset = 0;
+            _lastFragment = false;
+            _isRecoveryMode = false;
+                
+            // Update state
+            UpdateState(States.Ready);
+                
+            // Stop all timers
+            _sessionTimeout.Stop();
+            _controlTimeout.Stop();
+            _transferTimeout.Stop();
+            _healthCheckTimeout.Stop();
+            _verificationTimeout.Stop();
+            
+            // Try to send abort command if connected
+            if (BluetoothImpl.Instance.IsConnected && BluetoothImpl.Instance.Backend.IsStreamConnected)
+            {
+                try
+                {
+                    Log.Debug("FirmwareTransferManager: Sending FOTA_ABORT command");
+                    await BluetoothImpl.Instance.SendRequestAsync(MsgIds.FOTA_ABORT);
+                    await Task.Delay(500); // Give device time to process abort
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "FirmwareTransferManager: Failed to send abort command: {Error}", ex.Message);
+                }
+            }
+    
+            // Reconnect to reset device state
+            try
+            {
+                Log.Debug("FirmwareTransferManager: Disconnecting to reset device state");
+                await BluetoothImpl.Instance.DisconnectAsync();
+                
+                // Wait before reconnecting
+                await Task.Delay(1000);
+                
+                Log.Debug("FirmwareTransferManager: Reconnecting after firmware operation");
+                bool reconnected = await BluetoothImpl.Instance.ConnectAsync();
+                
+                if (!reconnected)
+                {
+                    Log.Warning("FirmwareTransferManager: Failed to reconnect after firmware operation");
+                    
+                    // Try one more time with longer delay and exponential backoff
+                    await Task.Delay(2000);
+                    
+                    // Try with increased timeout
+                    reconnected = await BluetoothImpl.Instance.ConnectAsync(timeout: 10000);
+                    
+                    if (!reconnected)
+                    {
+                        Log.Error("FirmwareTransferManager: Failed to reconnect after multiple attempts");
+                        
+                        // Notify user that manual reconnection may be needed
+                        StatusMessageChanged?.Invoke(this, "Failed to reconnect. You may need to manually reconnect your device.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "FirmwareTransferManager: Error during reconnection after firmware operation");
+            }
+            finally
+            {
+                // Dispose cancellation token source
+                _cancellationTokenSource?.Dispose();
+                _cancellationTokenSource = null;
+                
+                // Log operation duration
+                var duration = DateTime.Now - _startTime;
+                Log.Information("FirmwareTransferManager: Operation duration: {Duration}", duration);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "FirmwareTransferManager: Error during cancel operation");
+            
+            // Make sure state is reset even if an error occurs
+            try
+            {
+                UpdateState(States.Ready);
+                
+                // Stop all timers as a safety measure
+                _sessionTimeout.Stop();
+                _controlTimeout.Stop();
+                _transferTimeout.Stop();
+                _healthCheckTimeout.Stop();
+                _verificationTimeout.Stop();
+            }
+            catch
+            {
+                // Ignore errors in emergency cleanup
+            }
+        }
+        
+        Log.Information("FirmwareTransferManager: Firmware transfer operation cancelled");
     }
 
     private void OnSessionTimeoutElapsed(object? sender, ElapsedEventArgs e)
     {
-        Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.SessionTimeout, 
-            Strings.FwFailSessionTimeout));
+        Log.Error("FirmwareTransferManager: Session timeout elapsed after {Interval}ms", _sessionTimeout.Interval);
+        
+        try
+        {
+            // Stop the timer to prevent multiple triggers
+            _sessionTimeout.Stop();
+            
+            // Notify about the timeout
+            Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.SessionTimeout, 
+                Strings.FwFailSessionTimeout));
+            
+            // Cancel the operation
+            Cancel();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "FirmwareTransferManager: Error handling session timeout");
+            
+            // Ensure operation is cancelled even if error occurs
+            try
+            {
+                Cancel();
+            }
+            catch
+            {
+                // Ignore any errors during emergency cancel
+            }
+        }
     } 
         
     private void OnControlTimeoutElapsed(object? sender, ElapsedEventArgs e)
     {
-        Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.ControlTimeout, 
-            Strings.FwFailControlTimeout));
+        Log.Error("FirmwareTransferManager: Control timeout elapsed after {Interval}ms", _controlTimeout.Interval);
+        
+        try
+        {
+            // Stop the timer to prevent multiple triggers
+            _controlTimeout.Stop();
+            
+            // Notify about the timeout
+            Error?.Invoke(this, new FirmwareTransferException(FirmwareTransferException.ErrorCodes.ControlTimeout, 
+                Strings.FwFailControlTimeout));
+            
+            // Cancel the operation
+            Cancel();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "FirmwareTransferManager: Error handling control timeout");
+            
+            // Ensure operation is cancelled even if error occurs
+            try
+            {
+                Cancel();
+            }
+            catch
+            {
+                // Ignore any errors during emergency cancel
+            }
+        }
     }
 }
