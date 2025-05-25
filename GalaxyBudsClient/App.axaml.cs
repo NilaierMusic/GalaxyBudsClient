@@ -98,6 +98,35 @@ public class App : Application
     
     public override void OnFrameworkInitializationCompleted()
     {
+        // Try to enable Bluetooth when the app starts
+        Task.Run(async () =>
+        {
+            try
+            {
+                // Check if Bluetooth is enabled
+                if (!BluetoothImpl.Instance.IsBluetoothEnabled())
+                {
+                    Log.Information("App: Bluetooth is disabled. Attempting to enable it...");
+                    
+                    // Try to enable Bluetooth
+                    bool success = await BluetoothImpl.Instance.EnableBluetoothAsync();
+                    
+                    if (success)
+                    {
+                        Log.Information("App: Successfully enabled Bluetooth");
+                    }
+                    else
+                    {
+                        Log.Warning("App: Failed to enable Bluetooth. Some features may not work properly.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"App: Error while enabling Bluetooth: {ex.Message}");
+            }
+        });
+        
         if (BluetoothImpl.HasValidDevice)
         {
             Task.Run(() => BluetoothImpl.Instance.ConnectAsync());

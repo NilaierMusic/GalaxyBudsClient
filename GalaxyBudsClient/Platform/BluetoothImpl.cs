@@ -99,6 +99,40 @@ public sealed class BluetoothImpl : ReactiveObject, IDisposable
     private CancellationTokenSource _connectCancelSource = new();
     private readonly Task? _loop;
     // There is exactly one feature which requires connecting on a different UUID.
+    
+    /// <summary>
+    /// Checks if Bluetooth is enabled on the device
+    /// </summary>
+    /// <returns>True if Bluetooth is enabled, false otherwise</returns>
+    public bool IsBluetoothEnabled()
+    {
+        try
+        {
+            return _backend.IsBluetoothEnabled();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "BluetoothImpl: Error checking Bluetooth status");
+            return false;
+        }
+    }
+    
+    /// <summary>
+    /// Attempts to enable Bluetooth on the device
+    /// </summary>
+    /// <returns>True if Bluetooth was successfully enabled or was already enabled, false if it failed or is not supported</returns>
+    public async Task<bool> EnableBluetoothAsync()
+    {
+        try
+        {
+            return await _backend.EnableBluetoothAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "BluetoothImpl: Error enabling Bluetooth");
+            return false;
+        }
+    }
 
     private BluetoothImpl()
     {
